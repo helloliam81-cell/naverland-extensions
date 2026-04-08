@@ -34,13 +34,13 @@
 
 아래 버튼을 클릭하면 Tampermonkey가 자동으로 설치 화면을 띄웁니다.
 
-**[▶ 스크립트 설치하기](https://github.com/[여기에-본인-GitHub-아이디]/naverland-extensions/raw/main/naverland-tracking.user.js)**
+**[▶ 스크립트 설치하기](https://github.com/helloliam81-cell/naverland-extensions/raw/main/naverland-tracking.user.js)**
 
 > 링크를 클릭했는데 아무 반응이 없다면 Tampermonkey가 제대로 설치되지 않은 것입니다. 1단계를 다시 확인해 주세요.
 
 설치 화면이 열리면 **"설치"** 버튼을 클릭합니다.
 
-![설치 화면 예시](https://i.imgur.com/placeholder.png)
+![설치 화면 예시](https://imgur.com/a/5zzEzBL)
 
 ---
 
