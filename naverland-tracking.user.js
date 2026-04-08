@@ -100,10 +100,12 @@
 
     function buildAllRows() {
         const hist = getHistory();
+        const trackedIds = new Set(getTracked().map(x => x.complexId));
         const allRows = [];
         Object.keys(hist).sort().forEach(date => {
             const points = [];
-            Object.values(hist[date]).forEach(({ name, areas }) => {
+            Object.entries(hist[date]).forEach(([complexId, { name, areas }]) => {
+                if (!trackedIds.has(complexId)) return; // 삭제된 단지 제외
                 areas.forEach(({ area2, sale, rent }) => {
                     const gap = (sale != null && rent != null) ? sale - rent : '';
                     points.push({ name, area2, sale: sale ?? '', rent: rent ?? '', gap });
@@ -254,16 +256,7 @@
 
     function removeTracked(complexId) {
         saveTracked(getTracked().filter(x => x.complexId !== complexId));
-        // 이력에서도 제거
-        const hist = getHistory();
-        let changed = false;
-        Object.keys(hist).forEach(date => {
-            if (hist[date][complexId]) {
-                delete hist[date][complexId];
-                changed = true;
-            }
-        });
-        if (changed) saveHistory(hist);
+        // 이력은 유지 (내보내기 시 현재 트레킹 목록 기준으로 필터링)
     }
 
     // ══════════════════════════════════════════════
