@@ -218,6 +218,17 @@
             overlay.remove();
         };
 
+        const clearAllBtn = document.createElement('button');
+        clearAllBtn.textContent = '🗑 이력 모두 비우기';
+        clearAllBtn.style.cssText = 'padding:7px 18px;border:1px solid #fca5a5;background:#fff1f1;color:#dc2626;border-radius:5px;cursor:pointer;font-size:13px;margin-right:auto;';
+        clearAllBtn.onclick = () => {
+            if (!confirm('모든 이력을 삭제하시겠습니까?')) return;
+            localStorage.removeItem(HISTORY_KEY);
+            checkStorageWarning();
+            overlay.remove();
+        };
+
+        mFoot.appendChild(clearAllBtn);
         mFoot.appendChild(cancelBtn);
         mFoot.appendChild(downloadBtn);
 
@@ -243,6 +254,16 @@
 
     function removeTracked(complexId) {
         saveTracked(getTracked().filter(x => x.complexId !== complexId));
+        // 이력에서도 제거
+        const hist = getHistory();
+        let changed = false;
+        Object.keys(hist).forEach(date => {
+            if (hist[date][complexId]) {
+                delete hist[date][complexId];
+                changed = true;
+            }
+        });
+        if (changed) saveHistory(hist);
     }
 
     // ══════════════════════════════════════════════
