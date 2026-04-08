@@ -11,8 +11,11 @@
 (function () {
     'use strict';
 
-    const STORAGE_KEY = 'naverland_tracking_v1';
-    const FLOOR_KEY   = 'naverland_floor_settings_v1';
+    const STORAGE_KEY  = 'naverland_tracking_v1';
+    const FLOOR_KEY    = 'naverland_floor_settings_v1';
+    const HISTORY_KEY  = 'naverland_history_v1';
+    const EXPORT_KEY   = 'naverland_last_export_v1';
+    const HISTORY_DAYS = 90;
 
     // ══════════════════════════════════════════════
     // 데이터 관리 (localStorage)
@@ -39,6 +42,191 @@
 
     function saveFloorSettings(s) {
         localStorage.setItem(FLOOR_KEY, JSON.stringify(s));
+    }
+
+    // ── 이력 관리 ──
+    function getHistory() {
+        try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{}'); }
+        catch { return {}; }
+    }
+
+    function getStorageUsageRatio() {
+        let used = 0;
+        for (const key in localStorage) {
+            if (!localStorage.hasOwnProperty(key)) continue;
+            used += (key.length + localStorage[key].length) * 2;
+        }
+        return used / (5 * 1024 * 1024); // 5MB 기준
+    }
+
+    function checkStorageWarning() {
+        const warn = document.getElementById('nl-storage-warning');
+        if (!warn) return;
+        warn.style.display = getStorageUsageRatio() >= 0.9 ? 'flex' : 'none';
+    }
+
+    function saveHistory(hist) {
+        // 90일 초과 데이터 삭제
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - HISTORY_DAYS);
+        const cutoffStr = cutoff.toISOString().slice(0, 10);
+        Object.keys(hist).forEach(d => { if (d < cutoffStr) delete hist[d]; });
+        try {
+            localStorage.setItem(HISTORY_KEY, JSON.stringify(hist));
+        } catch {}
+        checkStorageWarning();
+    }
+
+    function todayStr() {
+        const d = new Date();
+        const yyyy = d.getFullYear();
+        const mm   = String(d.getMonth() + 1).padStart(2, '0');
+        const dd   = String(d.getDate()).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function saveHistoryForComplex(complexId, name, result) {
+        const hist  = getHistory();
+        const today = todayStr();
+        if (!hist[today]) hist[today] = {};
+        const areas = (result.areas || []).map(({ area2 }) => ({
+            area2,
+            sale: result.buy[area2]  ?? null,
+            rent: result.rent[area2] ?? null,
+        }));
+        hist[today][complexId] = { name, areas };
+        saveHistory(hist);
+    }
+
+    function buildAllRows() {
+        const hist = getHistory();
+        const allRows = [];
+        Object.keys(hist).sort().forEach(date => {
+            const points = [];
+            Object.values(hist[date]).forEach(({ name, areas }) => {
+                areas.forEach(({ area2, sale, rent }) => {
+                    const gap = (sale != null && rent != null) ? sale - rent : '';
+                    points.push({ name, area2, sale: sale ?? '', rent: rent ?? '', gap });
+                });
+            });
+            if (!points.length) return;
+            allRows.push(['날짜',         ...points.map(() => date)]);
+            allRows.push(['단지명',       ...points.map(p => p.name)]);
+            allRows.push(['전용면적(㎡)',  ...points.map(p => p.area2)]);
+            allRows.push(['매매최저(만원)',...points.map(p => p.sale)]);
+            allRows.push(['전세최저(만원)',...points.map(p => p.rent)]);
+            allRows.push(['매전갭(만원)', ...points.map(p => p.gap)]);
+            allRows.push([]);
+        });
+        return allRows;
+    }
+
+    function doDownloadCSV(allRows) {
+        const csv  = allRows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `naverland_history_${todayStr()}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        const now = new Date();
+        const ts  = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+        localStorage.setItem(EXPORT_KEY, ts);
+        const el = document.getElementById('nl-last-export');
+        if (el) el.textContent = `마지막 내보내기: ${ts}`;
+    }
+
+    function exportCSV() {
+        const allRows = buildAllRows();
+
+        if (!allRows.length) {
+            alert('내보낼 이력 데이터가 없습니다.');
+            return;
+        }
+
+        // ── 미리보기 모달 ──
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            position:fixed;inset:0;z-index:2147483648;
+            background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;`;
+
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            background:#fff;border-radius:10px;
+            box-shadow:0 8px 32px rgba(0,0,0,.28);
+            display:flex;flex-direction:column;
+            max-width:90vw;max-height:80vh;overflow:hidden;`;
+
+        // 헤더
+        const mHead = document.createElement('div');
+        mHead.style.cssText = 'padding:14px 18px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;background:#fafafa;border-radius:10px 10px 0 0;';
+        mHead.innerHTML = `<span style="font-weight:bold;font-size:14px;color:#333;">📋 내보내기 미리보기</span>`;
+
+        const closeBtn = document.createElement('button');
+        closeBtn.textContent = '✕';
+        closeBtn.style.cssText = 'background:none;border:none;font-size:16px;cursor:pointer;color:#888;padding:0 4px;';
+        closeBtn.onclick = () => overlay.remove();
+        mHead.appendChild(closeBtn);
+
+        // 테이블 영역
+        const tableWrap = document.createElement('div');
+        tableWrap.style.cssText = 'overflow:auto;flex:1;padding:12px 16px;';
+
+        const table = document.createElement('table');
+        table.style.cssText = 'border-collapse:collapse;font-size:11px;white-space:nowrap;';
+
+        const LABEL_STYLE = 'padding:5px 10px;background:#f0f4ff;color:#333;font-weight:bold;border:1px solid #dde;text-align:left;position:sticky;left:0;z-index:1;';
+        const DATE_STYLE  = 'padding:5px 10px;background:#e8f5e9;color:#2e7d32;border:1px solid #dde;text-align:center;';
+        const NAME_STYLE  = 'padding:5px 10px;border:1px solid #eee;color:#555;text-align:center;max-width:90px;overflow:hidden;text-overflow:ellipsis;';
+        const NUM_STYLE   = 'padding:5px 10px;border:1px solid #eee;color:#333;text-align:right;';
+        const BUY_STYLE   = 'padding:5px 10px;border:1px solid #eee;color:#c62828;text-align:right;';
+        const RENT_STYLE  = 'padding:5px 10px;border:1px solid #eee;color:#1565c0;text-align:right;';
+        const GAP_STYLE   = 'padding:5px 10px;border:1px solid #eee;color:#6a1fa0;text-align:right;';
+
+        const CELL_STYLES = [DATE_STYLE, NAME_STYLE, NUM_STYLE, BUY_STYLE, RENT_STYLE, GAP_STYLE];
+
+        allRows.forEach((row, ri) => {
+            if (!row.length) return; // 빈 구분 행 건너뜀
+            const tr = document.createElement('tr');
+            row.forEach((cell, ci) => {
+                const td = document.createElement('td');
+                td.textContent = cell;
+                td.style.cssText = ci === 0 ? LABEL_STYLE : (CELL_STYLES[ri % 7] || NUM_STYLE);
+                tr.appendChild(td);
+            });
+            table.appendChild(tr);
+        });
+
+        tableWrap.appendChild(table);
+
+        // 하단 버튼
+        const mFoot = document.createElement('div');
+        mFoot.style.cssText = 'padding:12px 18px;border-top:1px solid #eee;display:flex;justify-content:flex-end;gap:8px;background:#fafafa;border-radius:0 0 10px 10px;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = '취소';
+        cancelBtn.style.cssText = 'padding:7px 18px;border:1px solid #ddd;background:#f3f4f6;color:#555;border-radius:5px;cursor:pointer;font-size:13px;';
+        cancelBtn.onclick = () => overlay.remove();
+
+        const downloadBtn = document.createElement('button');
+        downloadBtn.textContent = '📥 CSV 다운로드';
+        downloadBtn.style.cssText = 'padding:7px 18px;border:none;background:#03C75A;color:#fff;border-radius:5px;cursor:pointer;font-size:13px;font-weight:bold;';
+        downloadBtn.onclick = () => {
+            doDownloadCSV(allRows);
+            overlay.remove();
+        };
+
+        mFoot.appendChild(cancelBtn);
+        mFoot.appendChild(downloadBtn);
+
+        modal.appendChild(mHead);
+        modal.appendChild(tableWrap);
+        modal.appendChild(mFoot);
+        overlay.appendChild(modal);
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
     }
 
     function isTracked(complexId) {
@@ -248,15 +436,44 @@
 
         // ── 헤더 (고정) ──
         const header = document.createElement('div');
-        header.style.cssText = 'padding:12px 16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center;background:#fafafa;border-radius:8px 8px 0 0;';
+        header.style.cssText = 'padding:12px 16px;border-bottom:1px solid #eee;display:flex;flex-direction:column;background:#fafafa;border-radius:8px 8px 0 0;';
+        const lastExport = localStorage.getItem(EXPORT_KEY);
         header.innerHTML = `
-            <span style="font-weight:bold;color:#333;">트레킹 목록</span>
-            <button id="nl-run-all-btn"
-                style="background:#03C75A;color:white;border:none;border-radius:4px;
-                       padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;">
-                전체 실행
-            </button>`;
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:bold;color:#333;">트레킹 목록</span>
+                <div style="display:flex;gap:6px;align-items:center;">
+                    <span id="nl-last-export" style="font-size:10px;color:#aaa;white-space:nowrap;">
+                        ${lastExport ? `마지막 내보내기: ${lastExport}` : ''}
+                    </span>
+                    <button id="nl-export-btn"
+                        style="background:#f0f9ff;color:#0369a1;border:1px solid #bae6fd;border-radius:4px;
+                               padding:5px 10px;cursor:pointer;font-size:12px;">
+                        📥 내보내기
+                    </button>
+                    <button id="nl-run-all-btn"
+                        style="background:#03C75A;color:white;border:none;border-radius:4px;
+                               padding:5px 14px;cursor:pointer;font-size:12px;font-weight:bold;">
+                        전체 실행
+                    </button>
+                </div>
+            </div>
+            <div id="nl-storage-warning"
+                style="display:none;margin-top:6px;padding:5px 8px;background:#fff7ed;border:1px solid #fed7aa;
+                       border-radius:5px;align-items:center;justify-content:space-between;gap:8px;">
+                <span style="font-size:11px;color:#c2410c;">⚠️ 누적 기록 용량 부족 — 데이터 초기화 필요</span>
+                <button id="nl-clear-history-btn"
+                    style="background:#fff1f1;color:#dc2626;border:1px solid #fca5a5;border-radius:4px;
+                           padding:3px 10px;cursor:pointer;font-size:11px;white-space:nowrap;">
+                    이력 초기화
+                </button>
+            </div>`;
+        header.querySelector('#nl-export-btn').onclick = exportCSV;
         header.querySelector('#nl-run-all-btn').onclick = () => window.__nlRunAll();
+        header.querySelector('#nl-clear-history-btn').onclick = () => {
+            localStorage.removeItem(HISTORY_KEY);
+            checkStorageWarning();
+        };
+        checkStorageWarning();
 
         // ── 층수 필터 (고정, 접기/펼치기 가능) ──
         const filterWrap = document.createElement('div');
@@ -408,6 +625,8 @@
         const toggle = document.getElementById('nl-track-toggle');
         if (toggle) toggle.textContent = `📍 트레킹 (${list.length})`;
 
+        checkStorageWarning();
+
         const dd = document.getElementById('nl-track-dropdown');
         if (!dd || dd.style.display === 'none') return;
 
@@ -530,6 +749,7 @@
                 item.areas      = result.areas;
                 item.priceCache = { buy: result.buy, rent: result.rent };
                 saveTracked(list);
+                saveHistoryForComplex(complexId, item.name, result);
             }
 
             // 패널 전체 다시 그리기 (드롭다운 + 가격 모두 반영)
